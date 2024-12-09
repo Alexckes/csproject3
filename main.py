@@ -23,8 +23,10 @@ sql_command = """CREATE TABLE IF NOT EXISTS keys(
 kid INTEGER PRIMARY KEY AUTOINCREMENT,
 key BLOB NOT NULL,
 exp INTEGER NOT NULL
-)"""
+);"""
 cursor.execute(sql_command)
+sqliteConnection.commit()
+
 sql_command = """CREATE TABLE IF NOT EXISTS users(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE,
@@ -32,8 +34,18 @@ sql_command = """CREATE TABLE IF NOT EXISTS users(
     email TEXT UNIQUE,
     date_registered TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_login TIMESTAMP      
-)"""
+);"""
 cursor.execute(sql_command)
+sqliteConnection.commit()
+sql_command = """CREATE TABLE IF NOT EXISTS auth_logs(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_ip TEXT NOT NULL,
+    request_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    user_id INTEGER,  
+    FOREIGN KEY(user_id) REFERENCES users(id)
+);"""
+cursor.execute(sql_command)
+sqliteConnection.commit()
 
 private_key = rsa.generate_private_key(
     public_exponent=65537,
@@ -59,8 +71,8 @@ expired_pem = expired_key.private_bytes(
 
 numbers = private_key.private_numbers()
 
-token1 = f.encode(pem)
-tokenX = f.encode(expired_pem)
+token1 = f.encrypt(pem)
+tokenX = f.encrypt(expired_pem)
 
 def int_to_base64(value):
     """Convert an integer to a Base64URL-encoded string"""
@@ -86,8 +98,8 @@ def convert_string_to_pem(key_string): #I tried to convert the returned string b
 
 dt = datetime.datetime.now()
 seq1 = int(dt.strftime("%Y%m%d%H%M%S")) #converting datetime to an int
-leg = pem
-beg = expired_pem
+#leg = pem
+#beg = expired_pem
 dt = datetime.datetime.now() + datetime.timedelta(hours=1)
 seq2 = int(dt.strftime("%Y%m%d%H%M%S"))
 data = [
@@ -126,9 +138,11 @@ class MyServer(BaseHTTPRequestHandler):
         if parsed_path.path == "/auth":
             sqliteConnection = sqlite3.connect('totally_not_my_privateKeys.db')
             cursor = sqliteConnection.cursor()
-            res = cursor.execute('SELECT key FROM keys WHERE exp != 0')
-            les = str(res.fetchone()) #fetching the string key from the database
-            mes = les[3:(len(les) - 3)] #trying to format it
+            #bes = str(cursor.execute('SELECT key FROM keys WHERE exp != 0').fetchone())
+            #res = f.decrypt(bes)
+            #les = str(res.fetchone()) #fetching the string key from the database
+            #mes = les[3:(len(les) - 3)] #trying to format it
+            #userinput = json.loads(params)
             headers = {
                 "kid": "goodKID"
             }
@@ -137,33 +151,52 @@ class MyServer(BaseHTTPRequestHandler):
                 "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1)
             }
             if 'expired' in params:
-                res = cursor.execute('SELECT key FROM keys WHERE exp == 0')
-                les = str(res.fetchone())
-                mes = les[3:(len(les) - 3)]
+                #bes = str(cursor.execute('SELECT key FROM keys WHERE exp == 0').fetchone())
+                #res = f.decrypt(bes)
+                #les = str(res.fetchone())
+                #mes = les[3:(len(les) - 3)]
                 #pelm = convert_string_to_pem(mes)
                 headers["kid"] = "expiredKID"
                 token_payload["exp"] = datetime.datetime.utcnow() - datetime.timedelta(hours=1)
-            encoded_jwt = jwt.encode(token_payload, token1, algorithm="RS256", headers=headers) #I gave up trying to plug some form of mes into here
+            encoded_jwt = jwt.encode(token_payload, pem, algorithm="RS256", headers=headers) #I gave up trying to plug some form of mes into here
             self.send_response(200)
             self.end_headers()
             self.wfile.write(bytes(encoded_jwt, "utf-8"))
+            
+            #logs = {
+            #    "id": 1,
+            #    "request_ip": "127.0.0.1",
+            #    "request_timestamp": datetime.datetime.utcnow(),
+            #    "user_id": str(cursor.execute('SELECT id FROM users WHERE username == ?',"temp").fetchone())
+            #}
+
+            logs = (1,"127.0.0.1",datetime.datetime.utcnow(),1)
+            #cursor.executemany('INSERT INTO auth_logs VALUES (?,?,?,?)',logs)
             sqliteConnection.commit()
             sqliteConnection.close()
             return
         if parsed_path.path == "/register":
             sqliteConnection = sqlite3.connect('totally_not_my_privateKeys.db')
             cursor = sqliteConnection.cursor()
-            userinput = json.loads(params)
-            uuidpass = uuid.uuid4()
-            password = {
-                "password": uuidpass
-            }
-            username = uuidpass["username"]
-            email = uuidpass["email"]
-            hashpass = hash(password,"not a salt")
-            self.send_response(200,password)
+            #userinput = json.loads(params)
+            uuidpass = uuid.uuid4().hex
+            username = "temp1"
+            email = "temp2"
+            hashpass = hash(uuidpass,"not a salt")
+            self.send_response(200,uuidpass)
             self.end_headers()
-            
+            #userdata = {
+            #    "id": 1,
+            #    "username": username,
+            #    "password_hash": hashpass,
+            #    "email": email,
+            #    "date_registered": datetime.datetime.utcnow(),
+            #    "last_login": 0
+            #}
+            userdata = (1,username,hashpass,email,datetime.datetime.utcnow(),0)
+            cursor.executemany('INSERT INTO users VALUES (?,?,?,?,?,?)',userdata)
+            sqliteConnection.commit()
+            sqliteConnection.close()
             return
         self.send_response(405)
         self.end_headers()
