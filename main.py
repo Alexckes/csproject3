@@ -2,15 +2,20 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography import x509
+from cryptography.fernet import Fernet
+from pyargon2 import hash
 from urllib.parse import urlparse, parse_qs
 import base64
 import json
 import jwt
 import datetime
 import sqlite3
+import uuid
 
 hostName = "localhost"
 serverPort = 8080
+NOT_MY_KEY = Fernet.generate_key() #using Fernet as my AES
+f = Fernet(NOT_MY_KEY)
 
 sqliteConnection = sqlite3.connect('totally_not_my_privateKeys.db')
 cursor = sqliteConnection.cursor() #creation of the database
@@ -18,7 +23,16 @@ sql_command = """CREATE TABLE IF NOT EXISTS keys(
 kid INTEGER PRIMARY KEY AUTOINCREMENT,
 key BLOB NOT NULL,
 exp INTEGER NOT NULL
-);"""
+)"""
+cursor.execute(sql_command)
+sql_command = """CREATE TABLE IF NOT EXISTS users(
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    email TEXT UNIQUE,
+    date_registered TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_login TIMESTAMP      
+)"""
 cursor.execute(sql_command)
 
 private_key = rsa.generate_private_key(
@@ -29,6 +43,8 @@ expired_key = rsa.generate_private_key(
     public_exponent=65537,
     key_size=2048,
 )
+
+
 
 pem = private_key.private_bytes(
     encoding=serialization.Encoding.PEM,
@@ -43,7 +59,8 @@ expired_pem = expired_key.private_bytes(
 
 numbers = private_key.private_numbers()
 
-
+token1 = f.encode(pem)
+tokenX = f.encode(expired_pem)
 
 def int_to_base64(value):
     """Convert an integer to a Base64URL-encoded string"""
@@ -74,8 +91,8 @@ beg = expired_pem
 dt = datetime.datetime.now() + datetime.timedelta(hours=1)
 seq2 = int(dt.strftime("%Y%m%d%H%M%S"))
 data = [
-    (1,expired_pem,0), 
-    (2,pem,seq1),
+    (1,tokenX,0), 
+    (2,token1,seq1),
 ]
 cursor.executemany('INSERT INTO keys VALUES (?,?,?)',data) #adding two keys to the database, one marked as expired with 0 and one not marked as expired with a date
 sqliteConnection.commit()
@@ -126,14 +143,28 @@ class MyServer(BaseHTTPRequestHandler):
                 #pelm = convert_string_to_pem(mes)
                 headers["kid"] = "expiredKID"
                 token_payload["exp"] = datetime.datetime.utcnow() - datetime.timedelta(hours=1)
-            encoded_jwt = jwt.encode(token_payload, pem, algorithm="RS256", headers=headers) #I gave up trying to plug some form of mes into here
+            encoded_jwt = jwt.encode(token_payload, token1, algorithm="RS256", headers=headers) #I gave up trying to plug some form of mes into here
             self.send_response(200)
             self.end_headers()
             self.wfile.write(bytes(encoded_jwt, "utf-8"))
             sqliteConnection.commit()
             sqliteConnection.close()
             return
-
+        if parsed_path.path == "/register":
+            sqliteConnection = sqlite3.connect('totally_not_my_privateKeys.db')
+            cursor = sqliteConnection.cursor()
+            userinput = json.loads(params)
+            uuidpass = uuid.uuid4()
+            password = {
+                "password": uuidpass
+            }
+            username = uuidpass["username"]
+            email = uuidpass["email"]
+            hashpass = hash(password,"not a salt")
+            self.send_response(200,password)
+            self.end_headers()
+            
+            return
         self.send_response(405)
         self.end_headers()
         return
